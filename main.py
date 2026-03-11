@@ -5,98 +5,95 @@ from playwright.async_api import async_playwright
 from streamlit_calendar import calendar
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="קולנוע יפו - הגרסה המלאה", page_icon="🎬", layout="wide")
+# הגדרות עמוד
+st.set_page_config(page_title="קולנוע יפו - לוח הקרנות", page_icon="🎬", layout="wide")
 
-# CSS מותאם לנייד ולעיצוב נקי
+# עיצוב גרפי משופר
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; color: #ffffff; }
     
-    /* כרטיס סרט רספונסיבי */
+    /* כרטיס סרט בעיצוב נקי */
     .movie-card {
         background: #111418; border-radius: 12px; margin-bottom: 25px;
         border: 1px solid #30363d; overflow: hidden; direction: rtl;
-        display: flex; flex-direction: row-reverse;
+        display: flex; flex-direction: row-reverse; height: 260px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     }
-    
-    @media (min-width: 768px) {
-        .movie-card { height: 260px; }
-        .movie-img { width: 220px; min-width: 220px; height: 100%; object-fit: cover; border-left: 1px solid #30363d; }
+    .movie-img { 
+        width: 200px; min-width: 200px; height: 100%; 
+        object-fit: cover; border-left: 1px solid #30363d; 
     }
-    
-    @media (max-width: 767px) {
-        .movie-card { flex-direction: column; height: auto; }
-        .movie-img { width: 100%; height: 230px; border-bottom: 1px solid #30363d; }
+    .movie-content { 
+        padding: 24px; flex-grow: 1; 
+        display: flex; flex-direction: column; 
+        justify-content: space-between; text-align: right;
     }
-
-    .movie-content { padding: 20px; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; text-align: right; }
-    .movie-title { color: #f84444; font-size: 1.8rem; font-weight: 900; margin: 0; line-height: 1.1; }
-    .movie-meta { color: #8b949e; font-size: 1.2rem; font-weight: bold; margin-top: 5px; }
+    .movie-title { color: #f84444; font-size: 1.9rem; font-weight: 900; margin: 0; line-height: 1.1; }
+    .movie-meta { color: #8b949e; font-size: 1.2rem; font-weight: bold; margin-top: 8px; }
     
+    /* כפתור רכישה גרפי */
+    .buy-container { margin-top: auto; }
     .buy-btn {
-        display: block; background-color: #f84444 !important; color: white !important;
-        padding: 12px; border-radius: 8px; text-decoration: none !important; 
-        font-weight: bold; text-align: center; margin-top: 15px; border: none;
+        display: inline-block; background-color: #f84444 !important; color: white !important;
+        padding: 12px 40px; border-radius: 8px; text-decoration: none !important; 
+        font-weight: bold; font-size: 1.1rem; border: none; transition: 0.3s;
+        text-align: center;
     }
+    .buy-btn:hover { background-color: #ff5f5f !important; transform: scale(1.02); }
+    
+    /* סידור טאבים */
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { font-size: 1.2rem; color: #8b949e; }
+    .stTabs [aria-selected="true"] { color: #f84444 !important; border-bottom-color: #f84444 !important; }
     </style>
     """, unsafe_allow_html=True)
 
-async def scrape_deep_search(status_placeholder):
+async def scrape_full_board(status_placeholder):
     results = []
     days_map = {0: "שני", 1: "שלישי", 2: "רביעי", 3: "חמישי", 4: "שישי", 5: "שבת", 6: "ראשון"}
+    
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        # שימוש ב-Viewport גדול כדי לתפוס את כל התוכן
-        context = await browser.new_context(viewport={'width': 1920, 'height': 3000})
+        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = await context.new_page()
+        
         try:
-            status_placeholder.info("מתחבר לסורק העמוק של קולנוע יפו...")
+            status_placeholder.info("מתחבר לאתר קולנוע יפו...")
             await page.goto("https://www.jaffacinema.com/", wait_until="networkidle")
             
-            # גלילה מבוקרת לטעינת כל ה-DOM
+            # גלילה עמוקה ואיטית לוודא טעינת כל הסרטים
             for i in range(12):
-                await page.mouse.wheel(0, 1200)
-                await asyncio.sleep(0.8)
-                status_placeholder.text(f"שואב נתונים... שלב {i+1}/12")
+                await page.evaluate("window.scrollBy(0, 1000)")
+                await asyncio.sleep(0.7)
+                status_placeholder.text(f"סורק את הלוח... ({i+1}/12)")
 
-            # שיטת הסריקה העמוקה שמחפשת לפי מבנה הנתונים
             movies_data = await page.evaluate('''() => {
-                const list = [];
-                // מוצאים את כל הקונטיינרים של Wix שכוללים כפתור רכישה
-                const items = Array.from(document.querySelectorAll('div[data-mesh-id]'))
-                    .filter(el => el.innerText.includes('לרכישת'));
+                const res = [];
+                const btns = Array.from(document.querySelectorAll('a')).filter(a => a.innerText.includes('לרכישת'));
                 
-                items.forEach(item => {
-                    const img = item.querySelector('img');
-                    const link = item.querySelector('a[href*="tickets"], a[href*="event-details"]');
+                btns.forEach(btn => {
+                    let container = btn.closest('div[data-mesh-id]') || btn.parentElement.parentElement.parentElement;
+                    const img = container.querySelector('img');
                     
-                    // מחלצים כותרת (הטקסט הכי גדול בקונטיינר)
                     let title = ""; let maxFS = 0;
-                    item.querySelectorAll('*').forEach(el => {
+                    container.querySelectorAll('*').forEach(el => {
                         const fs = parseFloat(window.getComputedStyle(el).fontSize);
                         const txt = el.innerText.trim();
-                        if (fs > maxFS && txt.length > 2 && txt.length < 50 && !txt.includes(':') && !txt.includes('/')) {
+                        if (fs > maxFS && txt.length > 1 && txt.length < 55 && !txt.includes('/') && !txt.includes(':')) {
                             maxFS = fs; title = txt;
                         }
                     });
 
-                    if (title && link) {
-                        list.push({
-                            title,
-                            url: link.href,
-                            img: img ? img.src : "",
-                            text: item.innerText
-                        });
-                    }
+                    res.push({ title, url: btn.href, img: img ? img.src : "", fullText: container.innerText });
                 });
-                return list;
+                return res;
             }''')
 
             seen = set()
             for m in movies_data:
-                # חילוץ תאריך ושעה בעזרת Regex חזק
-                match = re.search(r'(\d{1,2}/\d{1,2}).*?(\d{1,2}:\d{2})', m['text'])
-                if match:
+                match = re.search(r'(\d{1,2}/\d{1,2}).*?(\d{1,2}:\d{2})', m['fullText'])
+                if match and m['title']:
                     d, month = match.group(1).split('/')
                     date_obj = datetime(2026, int(month), int(d))
                     uid = f"{m['title']}-{match.group(2)}-{match.group(1)}"
@@ -109,47 +106,44 @@ async def scrape_deep_search(status_placeholder):
                         })
                         seen.add(uid)
         finally: await browser.close()
-    return sorted(results, key=lambda x: x['dt'])
+    return results
 
 # ניהול מצב
-if "movies" not in st.session_state: st.session_state.movies = None
-if "view" not in st.session_state: st.session_state.view = "רשימה"
+if "movies" not in st.session_state:
+    st.session_state.movies = None
 
-st.title("🎬 קולנוע יפו - לוח הקרנות")
+st.title("🎬 קולנוע יפו - הלוח המלא")
 
 if st.session_state.movies is None:
-    if st.button("🔍 סרוק את כל הסרטים", type="primary", use_container_width=True):
+    if st.button("🚀 טען את כל ההקרנות", type="primary"):
         msg = st.empty()
-        st.session_state.movies = asyncio.run(scrape_deep_search(msg))
+        st.session_state.movies = asyncio.run(scrape_full_board(msg))
         st.rerun()
 else:
+    # תאריך נוכחי למרץ 2026
+    current_sim_date = "2026-03-11"
+    
+    # סרגל צד (Sidebar) - כפי שביקשת
     with st.sidebar:
-        st.header("🔍 חיפוש")
-        titles = ["הכל"] + sorted(list(set(m['title'] for m in st.session_state.movies)))
-        movie_sel = st.selectbox("בחר סרט משלוף:", titles)
+        st.header("🔍 חיפוש וסינון")
+        all_titles = ["הכל"] + sorted(list(set(m['title'] for m in st.session_state.movies)))
+        movie_filter = st.selectbox("חפש שם סרט:", all_titles)
+        
+        time_filter = st.selectbox("טווח זמן:", ["הכל", "היום", "השבוע", "החודש"])
         
         st.divider()
-        if st.button("📅 הצג בלוח שנה" if st.session_state.view == "רשימה" else "📋 הצג כרשימה", use_container_width=True):
-            st.session_state.view = "חודש" if st.session_state.view == "רשימה" else "רשימה"
-            st.rerun()
-        
-        st.divider()
-        # ייצוא ליומן
-        ical = "BEGIN:VCALENDAR\nVERSION:2.0\n"
-        for m in st.session_state.movies:
-            ical += f"BEGIN:VEVENT\nSUMMARY:{m['title']}\nDTSTART:{m['iso'].replace('-','').replace(':','')}\nURL:{m['url']}\nEND:VEVENT\n"
-        ical += "END:VCALENDAR"
-        st.download_button("🗓️ הוסף ליומן גוגל", ical, "jaffa.ics", use_container_width=True)
-        
-        if st.button("🔄 סריקה חדשה", use_container_width=True):
+        if st.button("🔄 עדכן נתונים (סריקה חדשה)"):
             st.session_state.movies = None
             st.rerun()
 
-    # פילטור
-    f = [m for m in st.session_state.movies if movie_sel == "הכל" or m['title'] == movie_sel]
-
-    if st.session_state.view == "רשימה":
-        st.subheader(f"נמצאו {len(f)} הקרנות")
+    # סינון תוצאות
+    f = st.session_state.movies
+    if movie_filter != "הכל": f = [m for m in f if m['title'] == movie_filter]
+    
+    t1, t2 = st.tabs(["📋 רשימת הקרנות", "📅 לוח שנה חודשי"])
+    
+    with t1:
+        st.write(f"נמצאו {len(f)} הקרנות")
         for m in f:
             st.markdown(f"""
                 <div class="movie-card">
@@ -159,11 +153,20 @@ else:
                             <div class="movie-title">{m['title']}</div>
                             <div class="movie-meta">יום {m['day_name']} | {m['date_str']} | {m['time']}</div>
                         </div>
-                        <a href="{m['url']}" target="_blank" class="buy-btn">🎟️ רכישת כרטיסים</a>
+                        <div class="buy-container">
+                            <a href="{m['url']}" target="_blank" class="buy-btn">🎟️ רכישת כרטיסים</a>
+                        </div>
                     </div>
                 </div>
             """, unsafe_allow_html=True)
-    else:
-        st.subheader("מרץ 2026")
-        evs = [{"title": m['title'], "start": m['iso'], "url": m['url'], "color": "#f84444"} for m in f]
-        calendar(events=evs, options={"initialDate": "2026-03-01", "locale": "he", "direction": "rtl", "initialView": "dayGridMonth"})
+
+    with t2:
+        # תצוגת לוח שנה שעובדת!
+        calendar_events = [{"title": m['title'], "start": m['iso'], "url": m['url'], "color": "#f84444"} for m in f]
+        calendar(events=calendar_events, options={
+            "initialDate": "2026-03-01",
+            "locale": "he",
+            "direction": "rtl",
+            "initialView": "dayGridMonth",
+            "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth"}
+        })
