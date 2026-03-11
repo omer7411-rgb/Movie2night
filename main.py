@@ -6,7 +6,6 @@ from streamlit_calendar import calendar
 
 st.set_page_config(page_title="קולנוע יפו - הלוח המלא", page_icon="🎬", layout="wide")
 
-# עיצוב כהה עם כרטיסיות בולטות
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; color: #ffffff; }
@@ -16,6 +15,7 @@ st.markdown("""
     }
     .movie-title { color: #f84444; font-size: 1.8rem; font-weight: bold; }
     .movie-desc { color: #ced4da; font-size: 1rem; margin-top: 8px; }
+    .movie-meta { color: #8b949e; margin-top: 10px; font-size: 0.9rem; }
     .buy-btn {
         display: block; background: #f84444 !important; color: white !important;
         padding: 10px; border-radius: 6px; text-align: center; text-decoration: none; margin-top: 15px;
@@ -23,46 +23,47 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-async def scrape_all_cinema_content(status):
+async def scrape_full_cinema(status):
     results = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        # שימוש ב-User Agent של מחשב רגיל כדי למנוע חסימות
+        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
+        page = await context.new_page()
+        
         try:
-            status.write("🌐 פותח את האתר...")
+            status.write("🌐 מתחבר לקולנוע יפו...")
             await page.goto("https://www.jaffacinema.com/", wait_until="networkidle")
             
-            # גלילה מסיבית כדי לוודא שהכל נטען
-            status.write("📜 גולל וטוען את כל הלוח...")
-            for _ in range(10):
-                await page.mouse.wheel(0, 1000)
-                await asyncio.sleep(0.5)
-
-            # לוגיקה "רעבה": מחפשים כל אלמנט שיש בו תאריך ושעה
+            # גלילה מורחבת - 15 פעמים כדי להגיע לסוף הדף
+            status.write("📜 מבצע גלילה עמוקה לטעינת כל הסרטים...")
+            for i in range(15):
+                await page.mouse.wheel(0, 1200)
+                await asyncio.sleep(0.7) # מחכה שהתוכן ייטען
+            
+            status.write("🎣 אוסף את כל הסרטים מהדף...")
             data = await page.evaluate('''() => {
                 const movies = [];
-                // סורקים את כל הדיבים שיש להם טקסט משמעותי
-                document.querySelectorAll('div').forEach(div => {
-                    const text = div.innerText || "";
+                // סורקים כל אלמנט שיכול להכיל מידע על סרט
+                document.querySelectorAll('div, section').forEach(el => {
+                    const text = el.innerText || "";
                     const timeMatch = /(\d{1,2}\/\d{1,2}),?\s*(יום\s+\w+|היום)\s*(\d{1,2}:\d{2})/.exec(text);
                     
-                    if (timeMatch && text.length < 1000) { // מסננים דיבים ענקיים מדי שכוללים הכל
-                        // מחפשים לינק בתוך הדיב או קרוב אליו
-                        const link = div.querySelector('a[href*="calendar"], a[href*="tickets"]');
+                    // בודקים שהאלמנט לא גדול מדי (כדי לא לקחת את כל האתר בבת אחת)
+                    if (timeMatch && text.length < 1200) {
+                        const link = el.querySelector('a[href*="calendar"], a[href*="tickets"]');
                         
-                        // מוצאים את הכותרת בתוך הדיב (הטקסט הכי גדול)
                         let title = "";
                         let maxFS = 0;
-                        div.querySelectorAll('*').forEach(el => {
-                            const fs = parseFloat(window.getComputedStyle(el).fontSize);
-                            const t = el.innerText.trim();
+                        el.querySelectorAll('*').forEach(child => {
+                            const fs = parseFloat(window.getComputedStyle(child).fontSize);
+                            const t = child.innerText.trim();
                             if (fs > maxFS && t.length > 1 && t.length < 50 && !t.includes('/') && !t.includes('לרכישת')) {
                                 maxFS = fs;
                                 title = t;
                             }
                         });
 
-                        // תיאור - השורה הכי ארוכה
                         const lines = text.split('\\n').map(l => l.trim()).filter(l => l.length > 40);
                         const desc = lines.find(l => l !== title && !l.includes('/')) || "";
 
@@ -80,13 +81,11 @@ async def scrape_all_cinema_content(status):
                 return movies;
             }''')
 
-            # ניקוי כפילויות פשוט על בסיס שם וזמן
-            status.write(f"🔍 מעבד {len(data)} ממצאים...")
             seen = set()
             for m in data:
-                # חילוץ נקי של הזמן מהמחרוזת שמצאנו
                 time_match = re.search(r'(\d{1,2}/\d{1,2}).*?(\d{1,2}:\d{2})', m['dateInfo'])
                 if time_match:
+                    # מזהה ייחודי למניעת כפילויות
                     uid = f"{m['title']}-{time_match.group(2)}-{time_match.group(1)}"
                     if uid not in seen:
                         results.append({
@@ -99,12 +98,13 @@ async def scrape_all_cinema_content(status):
             await browser.close()
     return results
 
-st.title("🎬 לוח ההקרנות המלא - קולנוע יפו")
-status_box = st.empty()
+st.title("🎬 לוח הקרנות מלא - קולנוע יפו")
+msg = st.empty()
 
-if st.button("🚀 סרוק את כל הסרטים עכשיו", type="primary"):
-    st.session_state.movies = asyncio.run(scrape_all_cinema_content(status_box))
-    status_box.success(f"הצלחנו! נמצאו {len(st.session_state.movies)} סרטים.")
+if st.button("🚀 סרוק את כל הלוח (גלילה עמוקה)", type="primary"):
+    with st.spinner("טוען סרטים..."):
+        st.session_state.movies = asyncio.run(scrape_full_cinema(msg))
+        msg.success(f"הצלחנו! נמצאו {len(st.session_state.movies)} הקרנות.")
 
 if "movies" in st.session_state and st.session_state.movies:
     calendar(events=[{"title": m['title'], "start": m['iso'], "backgroundColor": "#f84444"} for m in st.session_state.movies], options={"direction": "rtl"})
