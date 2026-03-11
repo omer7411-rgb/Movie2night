@@ -117,4 +117,56 @@ st.title("🎬 קולנוע יפו - הלוח המלא")
 if st.session_state.movies is None:
     if st.button("🚀 טען את כל ההקרנות", type="primary"):
         msg = st.empty()
-        st.session_state.movies = asyncio.run(scrape_full_board
+        st.session_state.movies = asyncio.run(scrape_full_board(msg))
+        st.rerun()
+else:
+    # תאריך נוכחי למרץ 2026
+    current_sim_date = "2026-03-11"
+    
+    # סרגל צד (Sidebar) - כפי שביקשת
+    with st.sidebar:
+        st.header("🔍 חיפוש וסינון")
+        all_titles = ["הכל"] + sorted(list(set(m['title'] for m in st.session_state.movies)))
+        movie_filter = st.selectbox("חפש שם סרט:", all_titles)
+        
+        time_filter = st.selectbox("טווח זמן:", ["הכל", "היום", "השבוע", "החודש"])
+        
+        st.divider()
+        if st.button("🔄 עדכן נתונים (סריקה חדשה)"):
+            st.session_state.movies = None
+            st.rerun()
+
+    # סינון תוצאות
+    f = st.session_state.movies
+    if movie_filter != "הכל": f = [m for m in f if m['title'] == movie_filter]
+    
+    t1, t2 = st.tabs(["📋 רשימת הקרנות", "📅 לוח שנה חודשי"])
+    
+    with t1:
+        st.write(f"נמצאו {len(f)} הקרנות")
+        for m in f:
+            st.markdown(f"""
+                <div class="movie-card">
+                    <img src="{m['img']}" class="movie-img">
+                    <div class="movie-content">
+                        <div>
+                            <div class="movie-title">{m['title']}</div>
+                            <div class="movie-meta">יום {m['day_name']} | {m['date_str']} | {m['time']}</div>
+                        </div>
+                        <div class="buy-container">
+                            <a href="{m['url']}" target="_blank" class="buy-btn">🎟️ רכישת כרטיסים</a>
+                        </div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+    with t2:
+        # תצוגת לוח שנה שעובדת!
+        calendar_events = [{"title": m['title'], "start": m['iso'], "url": m['url'], "color": "#f84444"} for m in f]
+        calendar(events=calendar_events, options={
+            "initialDate": "2026-03-01",
+            "locale": "he",
+            "direction": "rtl",
+            "initialView": "dayGridMonth",
+            "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth"}
+        })
