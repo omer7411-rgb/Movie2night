@@ -1,4 +1,4 @@
-Import streamlit as st
+import streamlit as st
 import asyncio
 import re
 from playwright.async_api import async_playwright
