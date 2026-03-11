@@ -10,24 +10,31 @@ st.markdown("""
     <style>
     .stApp { background-color: #05070a; color: #ffffff; }
     .movie-card {
-        background: #111418; border-radius: 12px; margin-bottom: 20px;
-        border: 1px solid #30363d; padding: 20px; direction: rtl;
+        background: #111418; border-radius: 15px; margin-bottom: 30px;
+        border: 1px solid #30363d; overflow: hidden; direction: rtl;
+        display: flex; flex-direction: row-reverse;
     }
-    .movie-title { color: #f84444; font-size: 1.8rem; font-weight: bold; }
-    .movie-desc { color: #ced4da; font-size: 1rem; margin-top: 8px; }
-    .movie-meta { color: #8b949e; margin-top: 10px; font-size: 0.9rem; }
+    .movie-img { width: 200px; object-fit: cover; border-left: 1px solid #30363d; }
+    .movie-content { padding: 20px; flex-grow: 1; }
+    .movie-title { color: #f84444; font-size: 2rem; font-weight: bold; margin: 0; }
+    .movie-desc { color: #ced4da; font-size: 1rem; margin-top: 10px; line-height: 1.5; }
+    .movie-meta { color: #8b949e; margin-top: 15px; font-weight: bold; }
     .buy-btn {
-        display: block; background: #f84444 !important; color: white !important;
-        padding: 10px; border-radius: 6px; text-align: center; text-decoration: none; margin-top: 15px;
+        display: inline-block; background: #f84444 !important; color: white !important;
+        padding: 10px 25px; border-radius: 8px; text-align: center; 
+        text-decoration: none; margin-top: 15px; font-weight: bold;
+    }
+    @media (max-width: 768px) {
+        .movie-card { flex-direction: column; }
+        .movie-img { width: 100%; height: 250px; border-left: none; border-bottom: 1px solid #30363d; }
     }
     </style>
     """, unsafe_allow_html=True)
 
-async def scrape_full_cinema(status):
+async def scrape_until_end(status):
     results = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        # שימוש ב-User Agent של מחשב רגיל כדי למנוע חסימות
         context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = await context.new_page()
         
@@ -35,23 +42,28 @@ async def scrape_full_cinema(status):
             status.write("🌐 מתחבר לקולנוע יפו...")
             await page.goto("https://www.jaffacinema.com/", wait_until="networkidle")
             
-            # גלילה מורחבת - 15 פעמים כדי להגיע לסוף הדף
-            status.write("📜 מבצע גלילה עמוקה לטעינת כל הסרטים...")
-            for i in range(15):
-                await page.mouse.wheel(0, 1200)
-                await asyncio.sleep(0.7) # מחכה שהתוכן ייטען
-            
-            status.write("🎣 אוסף את כל הסרטים מהדף...")
+            # לולאת גלילה עד לסוף הדף המוחלט
+            status.write("📜 מבצע גלילה עמוקה... מחפש את כל הסרטים (זה עשוי לקחת רגע)...")
+            last_height = await page.evaluate("document.body.scrollHeight")
+            while True:
+                await page.mouse.wheel(0, 1500)
+                await asyncio.sleep(1.5) # זמן טעינה ל-Wix
+                new_height = await page.evaluate("document.body.scrollHeight")
+                if new_height == last_height: # אם הגובה לא השתנה, הגענו לסוף
+                    break
+                last_height = new_height
+                status.write(f"⏳ טוען עוד תוכן... (גובה דף: {new_height} פיקסלים)")
+
+            status.write("🎣 דג פוסטרים ופרטים מכל הלוח...")
             data = await page.evaluate('''() => {
                 const movies = [];
-                // סורקים כל אלמנט שיכול להכיל מידע על סרט
                 document.querySelectorAll('div, section').forEach(el => {
                     const text = el.innerText || "";
                     const timeMatch = /(\d{1,2}\/\d{1,2}),?\s*(יום\s+\w+|היום)\s*(\d{1,2}:\d{2})/.exec(text);
                     
-                    // בודקים שהאלמנט לא גדול מדי (כדי לא לקחת את כל האתר בבת אחת)
-                    if (timeMatch && text.length < 1200) {
+                    if (timeMatch && text.length < 1500) {
                         const link = el.querySelector('a[href*="calendar"], a[href*="tickets"]');
+                        const img = el.querySelector('img'); // ניסיון למצוא תמונה בבלוק
                         
                         let title = "";
                         let maxFS = 0;
@@ -72,6 +84,7 @@ async def scrape_full_cinema(status):
                                 title: title,
                                 desc: desc,
                                 url: link ? link.href : "https://www.jaffacinema.com/",
+                                img: img ? img.src : "",
                                 raw: text,
                                 dateInfo: timeMatch[0]
                             });
@@ -85,11 +98,10 @@ async def scrape_full_cinema(status):
             for m in data:
                 time_match = re.search(r'(\d{1,2}/\d{1,2}).*?(\d{1,2}:\d{2})', m['dateInfo'])
                 if time_match:
-                    # מזהה ייחודי למניעת כפילויות
                     uid = f"{m['title']}-{time_match.group(2)}-{time_match.group(1)}"
                     if uid not in seen:
                         results.append({
-                            "title": m['title'], "desc": m['desc'], "url": m['url'],
+                            "title": m['title'], "desc": m['desc'], "url": m['url'], "img": m['img'],
                             "time": time_match.group(2), "date": time_match.group(1),
                             "iso": f"2026-{time_match.group(1).split('/')[1].zfill(2)}-{time_match.group(1).split('/')[0].zfill(2)}T{time_match.group(2)}:00"
                         })
@@ -101,10 +113,10 @@ async def scrape_full_cinema(status):
 st.title("🎬 לוח הקרנות מלא - קולנוע יפו")
 msg = st.empty()
 
-if st.button("🚀 סרוק את כל הלוח (גלילה עמוקה)", type="primary"):
-    with st.spinner("טוען סרטים..."):
-        st.session_state.movies = asyncio.run(scrape_full_cinema(msg))
-        msg.success(f"הצלחנו! נמצאו {len(st.session_state.movies)} הקרנות.")
+if st.button("🚀 סרוק את כל האתר עד הסוף", type="primary"):
+    with st.spinner("מבצע סריקה טוטאלית..."):
+        st.session_state.movies = asyncio.run(scrape_until_end(msg))
+        msg.success(f"משימה הושלמה! נמצאו {len(st.session_state.movies)} סרטים.")
 
 if "movies" in st.session_state and st.session_state.movies:
     calendar(events=[{"title": m['title'], "start": m['iso'], "backgroundColor": "#f84444"} for m in st.session_state.movies], options={"direction": "rtl"})
@@ -112,9 +124,12 @@ if "movies" in st.session_state and st.session_state.movies:
     for m in st.session_state.movies:
         st.markdown(f"""
             <div class="movie-card">
-                <div class="movie-title">{m['title']}</div>
-                <div class="movie-desc">{m['desc']}</div>
-                <div class="movie-meta">⏰ שעה: {m['time']} | 📅 תאריך: {m['date']}</div>
-                <a href="{m['url']}" target="_blank" class="buy-btn">🎟️ לרכישת כרטיסים</a>
+                <img src="{m['img'] if m['img'] else 'https://via.placeholder.com/200x300?text=No+Poster'}" class="movie-img">
+                <div class="movie-content">
+                    <div class="movie-title">{m['title']}</div>
+                    <div class="movie-desc">{m['desc']}</div>
+                    <div class="movie-meta">📅 {m['date']} | ⏰ {m['time']}</div>
+                    <a href="{m['url']}" target="_blank" class="buy-btn">🎟️ הזמנת כרטיסים</a>
+                </div>
             </div>
         """, unsafe_allow_html=True)
