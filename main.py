@@ -24,28 +24,8 @@ st.markdown("""
     .date-header {
         background-color: #FF4B4B;
         color: white;
-        padding: 5px 15px;
-        border-radius: 5px;
+        padding: 8px 20px;
+        border-radius: 8px;
         display: inline-block;
+        margin-top: 20px;
         margin-bottom: 10px;
-    }
-    .movie-title { font-size: 1.5rem; font-weight: bold; margin: 5px 0; }
-    .time-label { color: #FF4B4B; font-size: 1.2rem; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
-
-async def get_jaffa_calendar():
-    movies = []
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(viewport={'width': 1280, 'height': 1000})
-        page = await context.new_page()
-        try:
-            url = "https://www.jaffacinema.com/schedule"
-            await page.goto(url, wait_until="networkidle", timeout=60000)
-            await page.wait_for_timeout(5000)
-
-            # מוציא את כל גושי הטקסט מהדף
-            elements = await page.query_selector_all("span, p, h3")
-            
-            temp_date = "הקרנות קרובות
