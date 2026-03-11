@@ -1,0 +1,18 @@
+{
+  "cinemas": [
+    {
+      "name": "קולנוע יפו",
+      "url": "https://www.jaffacinema.com/schedule",
+      "container": ".event-item",
+      "title": "h3",
+      "time": ".event-time"
+    },
+    {
+      "name": "סינמטק תל אביב",
+      "url": "https://www.cinema.co.il/events/",
+      "container": ".cinema-event-item",
+      "title": ".event-title",
+      "time": ".event-hour"
+    }
+  ]
+}
