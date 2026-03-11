@@ -1,65 +1,60 @@
 import streamlit as st
-import requests
-from bs4 import BeautifulSoup
+import asyncio
+import os
+from playwright.async_api import async_playwright
 
-st.set_page_config(page_title="Movie2Night", page_icon="🎬")
+st.set_page_config(page_title="Jaffa Cinema Scanner", page_icon="🎬")
 
-st.markdown("""
-    <style>
-    .movie-card { background-color: #1e1e1e; padding: 15px; border-radius: 12px; border-right: 4px solid #FF4B4B; margin-bottom: 10px; direction: rtl; text-align: right; }
-    h3 { color: #FF4B4B; margin: 0; font-size: 1.2rem; }
-    .info { color: #aaaaaa; font-size: 0.9rem; margin-bottom: 8px; }
-    </style>
-    """, unsafe_allow_html=True)
+# התקנת דפדפן בשרת
+if not os.path.exists("/home/appuser/.cache/ms-playwright"):
+    os.system("playwright install chromium")
 
-CINEMAS = [
-    {"name": "קולנוע יפו", "query": "קולנוע יפו לוח הקרנות", "url": "https://www.jaffacinema.com/schedule"},
-    {"name": "סינמטק תל אביב", "query": "סינמטק תל אביב לוח הקרנות", "url": "https://www.cinema.co.il/events/"},
-    {"name": "סינמטק ירושלים", "query": "סינמטק ירושלים לוח הקרנות", "url": "https://jer-cin.org.il/he/program"},
-    {"name": "לב סמדר", "query": "קולנוע לב סמדר לוח הקרנות", "url": "https://www.lev.co.il/cinema/smadar/"}
-]
-
-def get_movies_via_google():
-    all_found = []
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    for cinema in CINEMAS:
+async def scrape_jaffa():
+    movies = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        # מדמה דפדפן רגיל לחלוטין
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
+        page = await context.new_page()
+        
         try:
-            # אנחנו מחפשים בגוגל את התוצאות האחרונות
-            search_url = f"https://www.google.com/search?q={cinema['query']}"
-            resp = requests.get(search_url, headers=headers)
-            soup = BeautifulSoup(resp.content, 'html.parser')
+            # ננסה את עמוד הבית שבו מופיע הלוח
+            url = "https://www.jaffacinema.com"
+            await page.goto(url, wait_until="networkidle", timeout=60000)
             
-            # שליפת כותרות מהחיפוש שמרמזות על סרטים חדשים
-            items = soup.find_all('h3')
-            for item in items[:5]: # לוקחים את התוצאות המובילות
-                title = item.get_text()
-                if "הקרנה" in title or "סרט" in title or "|" in title:
-                    all_found.append({
-                        "title": title.replace(" - גוגל", "").split("|")[0],
-                        "cinema": cinema["name"],
-                        "time": "בדוק באתר לזמנים",
-                        "link": cinema["url"]
+            # המתנה של 5 שניות כדי לוודא ש-Wix סיים לטעון את הווידג'טים
+            await page.wait_for_timeout(5000)
+            
+            # חיפוש אלמנטים שמכילים טקסט של כותרת (h3 נפוץ ב-Wix לכותרות סרטים)
+            items = await page.query_selector_all("h3")
+            
+            for item in items:
+                title = await item.inner_text()
+                if title and len(title.strip()) > 1:
+                    movies.append({
+                        "title": title.strip(),
+                        "cinema": "קולנוע יפו",
+                        "link": url
                     })
-        except:
-            continue
-    return all_found
+        except Exception as e:
+            st.error(f"שגיאה: {e}")
+        finally:
+            await browser.close()
+    return movies
 
-st.title("🎬 Movie2Night")
-st.write("סורק נתונים דרך מנוע החיפוש (עוקף חסימות)")
+st.title("🎬 סורק קולנוע יפו")
 
-if st.button("🔍 מצא סרטים עכשיו", type="primary"):
-    with st.spinner("מבצע חיפוש חכם..."):
-        results = get_movies_via_google()
-        st.session_state.movies = results
-
-if "movies" in st.session_state:
-    if not st.session_state.movies:
-        st.warning("לא הצלחתי למשוך מידע. ייתכן שגוגל דורש אימות. נסה שוב בעוד דקה.")
-    else:
-        for m in st.session_state.movies:
-            st.markdown(f'<div class="movie-card"><h3>{m["title"]}</h3><div class="info">{m["cinema"]}</div></div>', unsafe_allow_html=True)
-            c1, c2 = st.columns(2)
-            c1.link_button("🎟️ לאתר והזמנה", m['link'], use_container_width=True)
-            g_url = f"https://www.google.com/calendar/render?action=TEMPLATE&text={m['title']}&location={m['cinema']}"
-            c2.link_button("📅 ליומן", g_url, use_container_width=True)
+if st.button("🔍 חפש הקרנות ביפו"):
+    with st.spinner("סורק את האתר..."):
+        results = asyncio.run(scrape_jaffa())
+        if results:
+            st.success(f"מצאתי {len(results)} כותרות פוטנציאליות!")
+            for m in results:
+                with st.container():
+                    st.markdown(f"### {m['title']}")
+                    st.link_button("לאתר", m['link'])
+                    st.write("---")
+        else:
+            st.warning("לא נמצאו סרטים. ייתכן והאתר מגן על התוכן שלו.")
