@@ -10,9 +10,9 @@ st.set_page_config(page_title="לוח הקרנות - קולנוע יפו", page_
 if not os.path.exists("/home/appuser/.cache/ms-playwright"):
     os.system("playwright install chromium")
 
-async def get_jaffa_final_v3():
+async def get_jaffa_cards_data():
     results = []
-    screenshot_path = "debug_final.png"
+    screenshot_path = "debug_cards.png"
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -20,91 +20,79 @@ async def get_jaffa_final_v3():
         )
         page = await context.new_page()
         try:
-            # שימוש בעמוד הבית שראינו שעולה בהצלחה
             await page.goto("https://www.jaffacinema.com/", wait_until="networkidle", timeout=60000)
             await page.wait_for_timeout(10000)
             
             await page.screenshot(path=screenshot_path, full_page=True)
             
-            # שליפת כל הטקסטים מהדף
+            # שליפת טקסטים בצורה חכמה ששומרת על הקרבה בין אלמנטים
             data = await page.evaluate('''() => {
-                return Array.from(document.querySelectorAll('span, div, p, h1, h2, h3'))
+                // מחפשים את כל הבלוקים של הסרטים
+                return Array.from(document.querySelectorAll('div, section'))
                             .map(el => el.innerText ? el.innerText.trim() : "")
-                            .filter(t => t.length > 1);
+                            .filter(t => t.includes('/') && t.includes(':') && t.length > 20);
             }''')
             
-            for i, text in enumerate(data):
-                # זיהוי שם סרט לפי קו אלכסוני ושנה (למשל: "שם הסרט / 23")
-                # מחפש טקסט שמכיל "/" ואחריו לפחות ספרה אחת
-                if "/" in text and re.search(r'/\s*\d+', text):
-                    movie_title = text
-                    movie_time = ""
-                    movie_day = ""
-                    movie_date = ""
+            for block in data:
+                lines = [l.strip() for l in block.split('\n') if l.strip()]
+                
+                # חיפוש שורה שמכילה תאריך ושעה (למשל: 22/03, יום ראשון 20:00)
+                time_match = re.search(r'(\d{1,2}/\d{1,2}),?\s*(יום\s+\w+)\s*(\d{1,2}:\d{2})', block)
+                
+                # חיפוש שורת "מקור / שנה" (למשל: איראן / 1999)
+                origin_match = re.search(r'(.+)\s*/\s*(\d{4})', block)
+                
+                if time_match:
+                    date_val = time_match.group(1)
+                    day_val = time_match.group(2)
+                    hour_val = time_match.group(3)
                     
-                    # סריקה של 12 האלמנטים הבאים אחרי שם הסרט כדי למצוא תאריך ושעה
-                    for j in range(i + 1, min(i + 13, len(data))):
-                        val = data[j]
-                        
-                        # זיהוי שעה (HH:MM)
-                        if re.match(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$', val):
-                            movie_time = val
-                        
-                        # זיהוי יום בשבוע
-                        elif any(day in val for day in ["יום שני", "יום שלישי", "יום רביעי", "יום חמישי", "יום שישי", "יום שבת", "יום ראשון"]):
-                            movie_day = val
-                        
-                        # זיהוי תאריך (למשל 12.05 או 12/05)
-                        elif re.search(r'\d{1,2}[\./]\d{1,2}', val):
-                            movie_date = val
-                        
-                        if movie_time and movie_day:
+                    # שם הסרט לרוב מופיע אחרי שורת המקור או כטקסט בולט בבלוק
+                    # ננסה לדוג אותו מהשורות הראשונות בבלוק שאינן שורת המקור
+                    movie_title = "סרט ללא שם"
+                    for line in lines:
+                        if "/" not in line and ":" not in line and "לרכישת" not in line and len(line) > 2:
+                            movie_title = line
                             break
-                    
-                    if movie_title and movie_time:
-                        results.append({
-                            "title": movie_title,
-                            "time": movie_time,
-                            "day": movie_day,
-                            "date": movie_date
-                        })
+                    elif origin_match and len(lines) > 1:
+                         # אם יש שורת מקור, שם הסרט לרוב נמצא מתחתיה או מעליה
+                         idx = 0
+                         for i, l in enumerate(lines):
+                             if "/" in l and any(char.isdigit() for char in l):
+                                 idx = i
+                                 break
+                         if idx + 1 < len(lines):
+                             movie_title = lines[idx+1]
+
+                    results.append({
+                        "title": movie_title,
+                        "time": hour_val,
+                        "day": day_val,
+                        "date": date_val
+                    })
         except Exception as e:
-            st.error(f"שגיאה בסריקה: {e}")
+            st.error(f"Error: {e}")
         finally:
             await browser.close()
             
-    # הסרת כפילויות
-    unique = []
-    seen = set()
-    for r in results:
-        key = f"{r['time']}-{r['title']}"
-        if key not in seen:
-            unique.append(r)
-            seen.add(key)
-    return unique, screenshot_path
+    return results, screenshot_path
 
 st.title("🎬 לוח הקרנות קולנוע יפו")
 
-if st.button("🔄 עדכן לוח הקרנות", type="primary"):
-    with st.spinner("מחפש סרטים עם המבנה 'שם / שנה'..."):
-        movies, img_path = asyncio.run(get_jaffa_final_v3())
+if st.button("🔄 עדכן סרטים", type="primary"):
+    with st.spinner("מנתח כרטיסיות סרטים..."):
+        movies, img_path = asyncio.run(get_jaffa_cards_data())
         
         if movies:
-            st.success(f"נמצאו {len(movies)} הקרנות!")
+            st.success(f"זיהיתי {len(movies)} סרטים!")
             for m in movies:
                 with st.container():
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.subheader(m['title'])
-                        details = f"🗓️ {m['day']}"
-                        if m['date']: details += f" ({m['date']})"
-                        details += f" | ⏰ **{m['time']}**"
-                        st.write(details)
-                    with col2:
-                        msg = f"היי, בא לך לסרט? {m['title']} ב-{m['time']} ({m['day']})."
-                        st.link_button("🟢 וואטסאפ", f"https://wa.me/?text={urllib.parse.quote(msg)}")
+                    st.markdown(f"### {m['title']}")
+                    st.write(f"📅 {m['day']} ({m['date']}) | ⏰ **{m['time']}**")
+                    msg = f"היי, בא לך לראות את '{m['title']}' בקולנוע יפו? ב-{m['day']} בשעה {m['time']}."
+                    st.link_button("🟢 שתף בוואטסאפ", f"https://wa.me/?text={urllib.parse.quote(msg)}")
                     st.divider()
         else:
-            st.warning("לא הצלחתי למצוא סרטים במבנה המבוקש.")
+            st.warning("לא הצלחתי לחלץ את שמות הסרטים מהכרטיסיות.")
             if os.path.exists(img_path):
-                st.image(img_path, caption="ככה נראה האתר בזמן הבדיקה")
+                st.image(img_path, caption="תצוגת האתר שנסרקה")
