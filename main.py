@@ -31,6 +31,7 @@ st.markdown("""
         margin-top: 15px;
         font-weight: bold;
         display: inline-block;
+        direction: rtl;
     }
     .movie-info { font-size: 1.2rem; margin-bottom: 10px; color: white; }
     </style>
@@ -42,12 +43,14 @@ async def get_jaffa_data():
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
         try:
+            # מעבר לאתר
             await page.goto("https://www.jaffacinema.com/schedule", wait_until="networkidle", timeout=60000)
-            await page.wait_for_timeout(6000)
+            await page.wait_for_timeout(7000)
             
+            # שליפת טקסטים בצורה תקינה (תיקון strip ל-trim)
             content = await page.evaluate('''() => {
                 return Array.from(document.querySelectorAll('div, span, p, h3'))
-                            .map(el => el.innerText.strip())
+                            .map(el => el.innerText ? el.innerText.trim() : "")
                             .filter(t => t.length > 1);
             }''')
             
@@ -55,13 +58,15 @@ async def get_jaffa_data():
             days = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
             
             for i, text in enumerate(content):
-                if any(f"יום {d}" in text or d == text for d in days):
+                # זיהוי יום
+                if any(f"יום {d}" in text or (text.startswith("יום") and d in text) for d in days):
                     current_date = text
                 
+                # זיהוי שעה
                 if re.match(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$', text):
                     for j in range(i + 1, min(i + 8, len(content))):
                         potential_name = content[j]
-                        if len(potential_name) > 3 and "הזמן" not in potential_name and ":" not in potential_name:
+                        if len(potential_name) > 3 and "הזמן" not in potential_name and ":" not in potential_name and "כרטיס" not in potential_name:
                             results.append({
                                 "date": current_date,
                                 "time": text,
@@ -73,6 +78,7 @@ async def get_jaffa_data():
         finally:
             await browser.close()
     
+    # ניקוי כפילויות
     unique_results = []
     seen = set()
     for res in results:
@@ -85,13 +91,12 @@ async def get_jaffa_data():
 st.title("🎬 לוח ההקרנות של קולנוע יפו")
 
 if st.button("🔄 טען לוח מעודכן", type="primary"):
-    with st.spinner("מעדכן נתונים..."):
-        # הרצה של הפונקציה האסינכרונית
+    with st.spinner("מושך נתונים מקולנוע יפו..."):
         st.session_state["jaffa_list"] = asyncio.run(get_jaffa_data())
 
 if "jaffa_list" in st.session_state:
     if not st.session_state["jaffa_list"]:
-        st.warning("לא נמצאו סרטים. נסה שוב.")
+        st.warning("האתר נטען אך לא זוהו סרטים. נסה ללחוץ שוב על כפתור הטעינה.")
     else:
         curr_d = ""
         for m in st.session_state["jaffa_list"]:
@@ -105,9 +110,5 @@ if "jaffa_list" in st.session_state:
                 </div>
             """, unsafe_allow_html=True)
             
-            msg = f"היי, בא לך לסרט? {m['title']} בקולנוע יפו ב-{m['date']} בשעה {m['time']}."
-            encoded_msg = urllib.parse.quote(msg)
-            
-            c1, c2 = st.columns(2)
-            c1.link_button("🎟️ כרטיסים", "https://www.jaffacinema.com/schedule", use_container_width=True)
-            c2.link_button("🟢 וואטסאפ", f"https://wa.me/?text={encoded_msg}", use_container_width=True)
+            # הכנת הודעת וואטסאפ
+            msg = f"היי, בא לך לסרט? {m['title']} בקולנוע יפו ב-{m['date']} בשעה {m['time']}. לינק:
