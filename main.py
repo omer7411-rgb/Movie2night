@@ -6,7 +6,7 @@ from playwright.async_api import async_playwright
 import urllib.parse
 from streamlit_calendar import calendar
 
-st.set_page_config(page_title="קולנוע יפו - הגרסה החכמה", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="קולנוע יפו - לוח הקרנות", page_icon="🍿", layout="wide")
 
 # עיצוב שחור יוקרתי (Dark Cinema)
 st.markdown("""
@@ -15,24 +15,25 @@ st.markdown("""
     .movie-card {
         background: #111418;
         border-radius: 20px;
-        padding: 0px;
         margin-bottom: 25px;
         border: 1px solid #2d3139;
         overflow: hidden;
         direction: rtl;
+        transition: 0.3s;
     }
-    .card-header { padding: 20px; border-bottom: 1px solid #2d3139; background: #1a1e24; }
-    .movie-title { color: #f84444; font-size: 1.9rem; font-weight: 900; }
-    .movie-info { padding: 20px; color: #ced4da; font-size: 1.1rem; }
-    .buy-link {
-        display: block; width: 100%; text-align: center;
-        background: #f84444; color: white !important;
-        padding: 12px; font-weight: bold; text-decoration: none;
+    .movie-card:hover { border-color: #f84444; background: #1a1e24; }
+    .card-content { padding: 25px; }
+    .movie-title { color: #ffffff; font-size: 2.2rem; font-weight: 900; margin-bottom: 10px; }
+    .movie-meta { color: #8b949e; font-size: 1.2rem; margin-bottom: 20px; }
+    .buy-btn {
+        display: inline-block; background: #f84444; color: white !important;
+        padding: 12px 25px; border-radius: 10px; font-weight: bold; text-decoration: none;
+        font-size: 1.1rem;
     }
     </style>
     """, unsafe_allow_html=True)
 
-async def get_cinema_expert_data():
+async def get_visual_cinema_data():
     results = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -40,63 +41,60 @@ async def get_cinema_expert_data():
         page = await context.new_page()
         try:
             await page.goto("https://www.jaffacinema.com/", wait_until="networkidle", timeout=60000)
-            await page.wait_for_timeout(10000) # זמן לטעינת התמונות והשכבות
+            await page.wait_for_timeout(10000)
             
-            # לוגיקת דייג לפי מבנה ויזואלי (CSS Computed Styles)
+            # סריקה לפי מאפיינים ויזואליים (Computed Styles)
             movies = await page.evaluate('''() => {
-                const cards = [];
-                // מחפשים אלמנטים שסביר להניח שהם כותרות על תמונות (גודל פונט גדול, צבע לבן, מיקום מוחלט)
-                const allElements = document.querySelectorAll('h1, h2, h3, span, div');
-                
-                // Wix בד"כ שמה סרטים בתוך 'item-data-inner' או מבנה דומה
-                document.querySelectorAll('[data-testid="mesh-container-content"], section').forEach(section => {
-                    const text = section.innerText || "";
+                const items = [];
+                // סריקה של כל בלוק שמכיל מידע על הקרנה
+                document.querySelectorAll('section, div[data-testid="mesh-container-content"]').forEach(block => {
+                    const text = block.innerText || "";
                     if (text.includes('/') && text.includes(':')) {
-                        // זיהוי הכותרת הכי בולטת בבלוק (הפונט הכי גדול)
-                        let bestTitle = "";
+                        let mainTitle = "";
                         let maxFontSize = 0;
                         
-                        section.querySelectorAll('*').forEach(el => {
+                        // מחפשים את האלמנט הכי גדול ובולט בתוך הבלוק (שם הסרט)
+                        block.querySelectorAll('*').forEach(el => {
                             const style = window.getComputedStyle(el);
-                            const fontSize = parseFloat(style.fontSize);
-                            const isWhite = style.color === 'rgb(255, 255, 255)';
+                            const fSize = parseFloat(style.fontSize);
                             const content = el.innerText.trim();
                             
-                            // שם סרט הוא בד"כ לבן, גדול, ולא מכיל סימנים טכניים
-                            if (fontSize > maxFontSize && content.length > 1 && content.length < 40 && !content.includes('/') && !content.includes(':')) {
-                                maxFontSize = fontSize;
-                                bestTitle = content;
+                            // סינון: שם סרט הוא בד"כ קצר, גדול, ולא מכיל סימני זמן/מקום
+                            if (fSize > maxFontSize && content.length > 1 && content.length < 45 && 
+                                !content.includes('/') && !content.includes(':') && !content.includes('לרכישת')) {
+                                maxFontSize = fSize;
+                                mainTitle = content;
                             }
                         });
 
-                        const link = section.querySelector('a[href*="tickets"], a[href*="event"]');
-                        if (bestTitle && bestTitle !== "קרא עוד") {
-                            cards.push({
-                                title: bestTitle,
-                                fullText: text,
-                                url: link ? link.href : "https://www.jaffacinema.com/"
+                        // חילוץ לינק הרכישה הספציפי לבלוק הזה
+                        const ticketLink = block.querySelector('a[href*="tickets"], a[href*="event-details"]');
+                        
+                        if (mainTitle && mainTitle !== "קרא עוד") {
+                            items.push({
+                                title: mainTitle,
+                                rawText: text,
+                                url: ticketLink ? ticketLink.href : "https://www.jaffacinema.com/"
                             });
                         }
                     }
                 });
-                return cards;
+                return items;
             }''')
 
             seen = set()
             for m in movies:
-                # חילוץ זמן מהטקסט המלא של הבלוק
-                time_match = re.search(r'(\d{1,2}/\d{1,2}),?\s*(יום\s+\w+|היום)\s*(\d{1,2}:\d{2})', m['fullText'])
+                # חילוץ תאריך ושעה מהטקסט של הבלוק
+                time_match = re.search(r'(\d{1,2}/\d{1,2}),?\s*(יום\s+\w+|היום)\s*(\d{1,2}:\d{2})', m['rawText'])
                 if time_match:
                     date_val, day_val, hour_val = time_match.groups()
-                    unique_id = f"{m['title']}-{hour_val}"
+                    unique_id = f"{m['title']}-{hour_val}-{date_val}"
+                    
                     if unique_id not in seen:
-                        # תיקון תאריך "היום" לערך מספרי אם צריך
-                        clean_day = "יום רביעי" if "היום" in day_val else day_val
-                        
                         results.append({
                             "title": m['title'],
                             "time": hour_val,
-                            "day": clean_day,
+                            "day": day_val,
                             "date": date_val,
                             "url": m['url'],
                             "iso": f"2026-{date_val.split('/')[1].zfill(2)}-{date_val.split('/')[0].zfill(2)}T{hour_val}:00"
@@ -106,28 +104,31 @@ async def get_cinema_expert_data():
             await browser.close()
     return results
 
-st.title("🍿 קולנוע יפו - לוח הקרנות חכם")
+st.title("🎬 לוח ההקרנות החכם - קולנוע יפו")
 
-if st.button("🚀 סרוק לפי עיצוב (Visual Scan)", type="primary"):
-    st.session_state.movies = asyncio.run(get_cinema_expert_data())
+if st.button("🚀 סרוק לוח מעודכן", type="primary"):
+    with st.spinner("מזהה סרטים לפי גודל פונט ומיקום..."):
+        st.session_state.movies = asyncio.run(get_visual_cinema_data())
 
 if "movies" in st.session_state and st.session_state.movies:
-    # תצוגת לוח שנה
-    events = [{"title": m['title'], "start": m['iso'], "url": m['url'], "backgroundColor": "#f84444"} for m in st.session_state.movies]
-    calendar(events=events, options={"direction": "rtl", "initialView": "dayGridMonth"})
+    # יומן חודשי מעוצב
+    st.subheader("🗓️ מבט חודשי")
+    cal_events = [{"title": m['title'], "start": m['iso'], "url": m['url'], "backgroundColor": "#f84444"} for m in st.session_state.movies]
+    calendar(events=cal_events, options={"direction": "rtl", "initialView": "dayGridMonth"})
 
     st.divider()
 
+    # רשימת סרטים
     for m in st.session_state.movies:
         st.markdown(f"""
             <div class="movie-card">
-                <div class="card-header">
+                <div class="card-content">
                     <div class="movie-title">{m['title']}</div>
+                    <div class="movie-meta">🗓️ {m['day']} ({m['date']}) | ⏰ {m['time']}</div>
+                    <a href="{m['url']}" target="_blank" class="buy-btn">🎟️ לרכישת כרטיסים</a>
                 </div>
-                <div class="movie-info">
-                    🗓️ {m['day']} ({m['date']}) <br>
-                    ⏰ שעה: <b>{m['time']}</b>
-                </div>
-                <a href="{m['url']}" target="_blank" class="buy-link">🎟️ הזמנת כרטיסים</a>
             </div>
         """, unsafe_allow_html=True)
+        
+        msg = urllib.parse.quote(f"בא לך לראות את '{m['title']}'? {m['day']} בשעה {m['time']}. לינק להזמנה: {m['url']}")
+        st.link_button(f"🟢 שלח בוואטסאפ", f"https://wa.me/?text={msg}")
