@@ -3,11 +3,9 @@ import asyncio
 import re
 from playwright.async_api import async_playwright
 from streamlit_calendar import calendar
-import pandas as pd
 
-st.set_page_config(page_title="קולנוע יפו - מהדורת הדינוזאור", page_icon="🦖", layout="wide")
+st.set_page_config(page_title="קולנוע יפו - 🦖 הגרסה המנצחת", page_icon="🦖", layout="wide")
 
-# עיצוב האפליקציה
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; color: #ffffff; }
@@ -24,60 +22,65 @@ st.markdown("""
         display: inline-block; background: #f84444 !important; color: white !important;
         padding: 8px 20px; border-radius: 6px; text-decoration: none; margin-top: 15px; font-weight: bold;
     }
-    .dino-track { font-family: monospace; font-size: 20px; color: #f84444; }
+    .dino-track { font-family: monospace; font-size: 24px; color: #f84444; direction: ltr; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
-async def scrape_cinema_with_dino(status_placeholder):
+async def scrape_full_cinema_with_dino(status_placeholder):
     results = []
-    # מסלול הדינוזאור
-    track = ["_"] * 20
-    dino_pos = 0
+    track_size = 30
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        context = await browser.new_context(viewport={'width': 1280, 'height': 1000})
+        page = await context.new_page()
+        
         try:
-            # עדכון דינוזאור רץ בזמן הטעינה
-            for i in range(5):
-                dino_pos = i % 20
-                current_track = list(track)
-                current_track[dino_pos] = "🦖"
-                status_placeholder.markdown(f"<div class='dino-track'>{''.join(current_track)} 🌐 מתחבר...</div>", unsafe_allow_html=True)
-                if i == 0: await page.goto("https://www.jaffacinema.com/", wait_until="networkidle")
-                await asyncio.sleep(0.5)
-
-            # גלילה עם דינוזאור
-            for i in range(10):
-                dino_pos = (5 + i) % 20
-                current_track = list(track)
-                current_track[dino_pos] = "🦖"
-                status_placeholder.markdown(f"<div class='dino-track'>{''.join(current_track)} 📜 גולל ומחפש סרטים...</div>", unsafe_allow_html=True)
+            # שלב 1: חיבור
+            await page.goto("https://www.jaffacinema.com/", wait_until="networkidle")
+            
+            # שלב 2: גלילה עמוקה עם דינוזאור רץ
+            for i in range(15):
+                pos = i % track_size
+                track = ["_"] * track_size
+                track[pos] = "🦖"
+                status_placeholder.markdown(f"<div class='dino-track'>{''.join(track)} <br> 📜 הדינוזאור סורק את הלוח...</div>", unsafe_allow_html=True)
+                
                 await page.mouse.wheel(0, 1000)
                 await asyncio.sleep(0.8)
-            
-            movies_raw = await page.evaluate('''() => {
+
+            # שלב 3: איסוף נתונים (לוגיקת ה-Anchor שעבדה לנו)
+            movies_data = await page.evaluate('''() => {
                 const items = [];
-                const buttons = Array.from(document.querySelectorAll('a')).filter(a => a.innerText.includes('לרכישת'));
+                const buttons = Array.from(document.querySelectorAll('a'))
+                                     .filter(a => a.innerText.includes('לרכישת'));
+
                 buttons.forEach(btn => {
                     let container = btn.closest('div[data-mesh-id]') || btn.parentElement.parentElement.parentElement;
                     const img = container.querySelector('img');
                     let title = ""; let maxFS = 0;
+                    
                     container.querySelectorAll('*').forEach(el => {
                         const fs = parseFloat(window.getComputedStyle(el).fontSize);
-                        if (fs > maxFS && el.innerText.length < 50 && !el.innerText.includes('/') && !el.innerText.includes(':')) {
-                            maxFS = fs; title = el.innerText.trim();
+                        const txt = el.innerText.trim();
+                        if (fs > maxFS && txt.length > 1 && txt.length < 55 && !txt.includes('/') && !txt.includes(':') && !txt.includes('לרכישת')) {
+                            maxFS = fs; title = txt;
                         }
                     });
-                    items.push({ title, url: btn.href, img: img ? img.src : "", fullText: container.innerText });
+
+                    if (title && title !== "קרא עוד") {
+                        items.push({
+                            title, url: btn.href, img: img ? img.src : "", fullText: container.innerText
+                        });
+                    }
                 });
                 return items;
             }''')
 
             seen = set()
-            for m in movies_raw:
+            for m in movies_data:
                 time_match = re.search(r'(\d{1,2}/\d{1,2}).*?(\d{1,2}:\d{2})', m['fullText'])
-                if time_match and m['title']:
+                if time_match:
                     uid = f"{m['title']}-{time_match.group(2)}-{time_match.group(1)}"
                     if uid not in seen:
                         day, month = time_match.group(1).split('/')
@@ -98,28 +101,28 @@ def create_ical(movies):
     ical += "END:VCALENDAR"
     return ical
 
-st.title("🎬 קולנוע יפו - 🦖 Dino-Scan")
+st.title("🎬 קולנוע יפו - 🦖 המערכת המלאה")
 
 if "movies" not in st.session_state:
     status_msg = st.empty()
-    if st.button("🚀 שחרר את הדינוזאור לסרוק!", type="primary"):
-        st.session_state.movies = asyncio.run(scrape_cinema_with_dino(status_msg))
+    if st.button("🚀 שחרר את הדינוזאור!", type="primary"):
+        st.session_state.movies = asyncio.run(scrape_full_cinema_with_dino(status_msg))
         status_msg.success(f"🦖 הדינוזאור חזר עם {len(st.session_state.movies)} סרטים!")
         st.rerun()
 else:
-    # כלי חיפוש וייצוא
+    # חיפוש וסינון
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        search = st.text_input("🔍 חפש סרט...", placeholder="הקלד שם סרט...")
+        search = st.text_input("🔍 חפש סרט...", placeholder="למשל: סנדק...")
     with col2:
         date_list = ["הכל"] + sorted(list(set(m['date'] for m in st.session_state.movies)))
         date_filter = st.selectbox("📅 תאריך", date_list)
     with col3:
-        st.download_button("🗓️ הורד ליומן", data=create_ical(st.session_state.movies), file_name="movies.ics")
+        st.download_button("🗓️ ייצוא ליומן", data=create_ical(st.session_state.movies), file_name="jaffa.ics")
 
     filtered = [m for m in st.session_state.movies if (search.lower() in m['title'].lower()) and (date_filter == "הכל" or m['date'] == date_filter)]
 
-    t1, t2 = st.tabs(["📋 רשימה", "📅 יומן חודשי"])
+    t1, t2 = st.tabs(["📋 רשימת סרטים", "📅 לוח שנה"])
     
     with t1:
         for m in filtered:
@@ -129,7 +132,7 @@ else:
                     <div class="movie-content">
                         <div class="movie-title">{m['title']}</div>
                         <div class="movie-meta">📅 {m['date']} | ⏰ {m['time']}</div>
-                        <a href="{m['url']}" target="_blank" class="buy-btn">🎟️ כרטיסים</a>
+                        <a href="{m['url']}" target="_blank" class="buy-btn">🎟️ הזמנת כרטיסים</a>
                     </div>
                 </div>
             """, unsafe_allow_html=True)
